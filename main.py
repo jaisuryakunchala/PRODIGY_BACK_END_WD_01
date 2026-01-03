@@ -1,27 +1,41 @@
 from fastapi import FastAPI, HTTPException, status
+from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, EmailStr, Field
 from uuid import UUID, uuid4
-from typing import Dict
+from typing import Dict, List, Optional
 
-app = FastAPI(title="User CRUD API")
+app = FastAPI(
+    title="User CRUD API",
+    description="A simple REST API to manage users with UUID, proper validation and error handling",
+    version="1.0.0"
+)
 
 # In-memory database
 users_db: Dict[UUID, dict] = {}
 
+# Pydantic models
 class UserCreate(BaseModel):
-    name: str = Field(..., min_length=2)
+    name: str = Field(..., min_length=2, max_length=50)
     email: EmailStr
     age: int = Field(..., gt=0, lt=150)
 
 class UserUpdate(BaseModel):
-    name: str | None = Field(None, min_length=2)
-    email: EmailStr | None = None
-    age: int | None = Field(None, gt=0, lt=150)
+    name: Optional[str] = Field(None, min_length=2, max_length=50)
+    email: Optional[EmailStr] = None
+    age: Optional[int] = Field(None, gt=0, lt=150)
 
 class User(UserCreate):
     id: UUID
 
-@app.post("/users", response_model=User, status_code=status.HTTP_201_CREATED)
+# Root endpoint
+@app.get("/", summary="Check API status")
+def root():
+    return {"message": "User CRUD API is running"}
+
+
+# CREATE
+@app.post("/users", response_model=User, status_code=status.HTTP_201_CREATED, summary="Create a new user")
 def create_user(user: UserCreate):
     user_id = uuid4()
     new_user = {
@@ -33,22 +47,29 @@ def create_user(user: UserCreate):
     users_db[user_id] = new_user
     return new_user
 
-@app.get("/users", response_model=list[User])
+
+# READ ALL
+@app.get("/users", response_model=List[User], summary="Get all users")
 def get_all_users():
     return list(users_db.values())
 
-@app.get("/users/{user_id}", response_model=User)
+
+# READ BY ID
+@app.get("/users/{user_id}", response_model=User, summary="Get user by ID")
 def get_user(user_id: UUID):
     if user_id not in users_db:
-        raise HTTPException(status_code=404, detail="User not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     return users_db[user_id]
 
-@app.put("/users/{user_id}", response_model=User)
+
+# UPDATE
+@app.put("/users/{user_id}", response_model=User, summary="Update user by ID")
 def update_user(user_id: UUID, user: UserUpdate):
     if user_id not in users_db:
-        raise HTTPException(status_code=404, detail="User not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
     stored_user = users_db[user_id]
+
     if user.name is not None:
         stored_user["name"] = user.name
     if user.email is not None:
@@ -58,8 +79,20 @@ def update_user(user_id: UUID, user: UserUpdate):
 
     return stored_user
 
-@app.delete("/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+
+# DELETE
+@app.delete("/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Delete user by ID")
 def delete_user(user_id: UUID):
     if user_id not in users_db:
-        raise HTTPException(status_code=404, detail="User not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     del users_db[user_id]
+    return JSONResponse(status_code=status.HTTP_204_NO_CONTENT, content=None)
+
+
+# CUSTOM VALIDATION ERROR HANDLER (optional, converts 422 to 400)
+@app.exception_handler(RequestValidationError)
+def validation_exception_handler(request, exc):
+    return JSONResponse(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        content={"detail": exc.errors(), "body": exc.body}
+    )
